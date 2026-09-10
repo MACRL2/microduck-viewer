@@ -34,6 +34,7 @@
 } }
 </script>
 <script type="module">
+  import * as THREE from 'three';
   import { createViewer } from '../src/core.js';
   const params = new URLSearchParams(location.search);
   if (params.get('theme') === 'light') document.documentElement.classList.add('light');
@@ -41,7 +42,7 @@
   const status = document.getElementById('status');
   const viewer = await createViewer({
     canvas: document.getElementById('c'),
-    background: new (await import('three')).Color(bg).getHex(),
+    background: new THREE.Color(bg).getHex(),
     onStatus: (m) => { status.textContent = m; if (m === 'ready') status.style.display = 'none'; },
   });
   document.getElementById('push').onclick = () => viewer.push(
@@ -52,7 +53,11 @@
     const d = e.data || {};
     if (d.type === 'microduck:push') viewer.push();
     else if (d.type === 'microduck:reset') viewer.reset();
-    else if (d.type === 'microduck:theme') document.documentElement.classList.toggle('light', d.value === 'light');
+    else if (d.type === 'microduck:theme') {
+      document.documentElement.classList.toggle('light', d.value === 'light');
+      const c = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+      viewer.setBackground(new THREE.Color(c).getHex());
+    }
   });
   viewer.start();
   window.__viewer = viewer;   // for the headless smoke

@@ -171,6 +171,7 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     stop() { running = false; cancelAnimationFrame(raf); },
     push(vx = 0.8, vy = 0.5) { const v = data.qvel; v[0] += vx; v[1] += vy; },
     reset() { resetPose(); },
+    setBackground(hex) { scene.background = new THREE.Color(hex); },
     trunkZ: () => data.xpos[trunkId * 3 + 2],
     resize,
     dispose() {

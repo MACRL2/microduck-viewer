@@ -1,0 +1,7 @@
+{
+  "tier": "MILESTONE",
+  "summary": "microduck-viewer live on Pages",
+  "tags": "trophy,robot",
+  "body": "https://macrl2.github.io/microduck-viewer/balance/\n┌───────────────────────────────────────┐\n│ repo created + pushed (MACRL2 org)     │\n│ Pages deploy ✓  live-verified headless │\n│ balances 0.117 · recovers from push ✓  │\n│ separate repo → course stays markdown  │\n└───────────────────────────────────────┘\nnext: course-side lazy-iframe demo → preview",
+  "created_at": 1789072151
+}
