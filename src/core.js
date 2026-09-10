@@ -12,6 +12,13 @@ import {
 
 const asset = (p) => new URL(`../assets/${p}`, import.meta.url).href;
 
+// Jaw hinge (from pollen-robotics/microduck-simulator duck.js): the beak opens
+// by rotating jaw.stl + jaw_soft.stl about a hinge in jaw.stl's local frame,
+// axis = mesh-local X, up to JAW_MAX_OPEN rad.
+const JAW_MAX_OPEN = 0.32;
+const JAW_HINGE_LOCAL = new THREE.Vector3(0, 0.00004, 0.0075);
+const JAW_SIGN = 1;    // which way local +X rotation swings the lower beak open (down)
+
 async function loadGlbGeometries() {
   const gltf = await new GLTFLoader().loadAsync(asset('microduck.glb'));
   const map = new Map();
@@ -84,6 +91,8 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     return matCache.get(key);
   };
   const meshGeoms = [];
+  const jawMeshes = [];      // jaw.stl + jaw_soft.stl, rotated about a hinge to "open the mouth"
+  let jawMain = null;        // jaw.stl — the hinge is defined in its local frame
   for (let i = 0; i < model.ngeom; i++) {
     if (model.geom_type[i] !== MESH || model.geom_group[i] !== 2) continue;  // visual only
     const dataid = model.geom_dataid[i];
@@ -103,6 +112,7 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
         model.mesh_quat[dataid * 4 + 3], model.mesh_quat[dataid * 4]),   // wxyz -> xyzw
       new THREE.Vector3(1, 1, 1)).invert();
     scene.add(m); meshGeoms.push({ i, m, meshLocalInv });
+    if (mname === 'jaw' || mname === 'jaw_soft') { jawMeshes.push(m); if (mname === 'jaw') jawMain = m; }
   }
 
   const cam = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
@@ -180,12 +190,14 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
   // emote() overlays a short scripted gesture with an ease-in/out envelope.
   const DT = 0.02;                 // control period (50 Hz)
   let tick = 0, activeEmote = null;
+  let mouthOpen = 0, mouthHold = 0;    // 0 = closed, 1 = fully open (render-side jaw)
   function driveHead() {
     const t = tick * DT;
     let neck = 0;
     let pitch = 0.10 * Math.sin(t * 0.37 + 0.5);          // idle: gentle scan
     let yaw = 0.20 * Math.sin(t * 0.53) + 0.09 * Math.sin(t * 0.24 + 1.3);
     let roll = 0.05 * Math.sin(t * 0.29 + 2.1);
+    let mouth = mouthHold;
     if (activeEmote) {
       const s = (tick - activeEmote.t0) * DT, k = s / activeEmote.dur;
       const env = Math.sin(Math.PI * Math.min(1, k));      // 0 → 1 → 0
@@ -194,9 +206,14 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
       else if (e.kind === 'shake') yaw += env * 0.85 * Math.sin(2 * Math.PI * 2.5 * k);
       else if (e.kind === 'tilt') roll += env * 0.75;
       else if (e.kind === 'look') { yaw += env * e.yaw; pitch += env * e.pitch; }
+      else if (e.kind === 'quack') {                        // open/close beak + little nods
+        mouth = Math.max(mouth, env * (0.5 - 0.5 * Math.cos(2 * Math.PI * 3 * k)));
+        pitch += env * 0.25 * Math.sin(2 * Math.PI * 3 * k);
+      }
       if (k >= 1) activeEmote = null;
     }
     cmd[3] = neck; cmd[4] = pitch; cmd[5] = yaw; cmd[6] = roll;
+    mouthOpen = Math.max(0, Math.min(1, mouth));
   }
   function controlStep() {
     tick++; driveHead();
@@ -207,6 +224,8 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     for (let s = 0; s < DECIMATION; s++) mujoco.mj_step(model, data);
   }
   const _geom = new THREE.Matrix4();
+  const _hinge = new THREE.Vector3(), _axis = new THREE.Vector3();
+  const _rOpen = new THREE.Matrix4(), _rRot = new THREE.Matrix4(), _tmp = new THREE.Matrix4();
   function syncMeshes() {
     const xp = data.geom_xpos, xm = data.geom_xmat;   // geom_xmat is row-major 3x3
     for (const { i, m, meshLocalInv } of meshGeoms) {
@@ -215,6 +234,18 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
         xm[r + 3], xm[r + 4], xm[r + 5], xp[p + 1],
         xm[r + 6], xm[r + 7], xm[r + 8], xp[p + 2], 0, 0, 0, 1);
       m.matrix.multiplyMatrices(_geom, meshLocalInv);
+    }
+    // Open the beak: rotate the jaw meshes about the hinge (fixed to the head).
+    // Compute the hinge point/axis in world from jaw.stl's base transform, then
+    // premultiply that world rotation onto every jaw mesh.
+    if (jawMain && mouthOpen > 0.001) {
+      _hinge.copy(JAW_HINGE_LOCAL).applyMatrix4(jawMain.matrix);
+      _axis.set(1, 0, 0).transformDirection(jawMain.matrix).normalize();   // mesh-local X → world
+      _rRot.makeRotationAxis(_axis, JAW_SIGN * JAW_MAX_OPEN * mouthOpen);
+      _rOpen.makeTranslation(_hinge.x, _hinge.y, _hinge.z)
+        .multiply(_rRot)
+        .multiply(_tmp.makeTranslation(-_hinge.x, -_hinge.y, -_hinge.z));
+      for (const jm of jawMeshes) jm.matrix.premultiply(_rOpen);
     }
   }
 
@@ -240,11 +271,12 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     push(vx = 0.8, vy = 0.5) { const v = data.qvel; v[0] += vx; v[1] += vy; },
     reset() { resetPose(); },
     emote(kind = 'random') {
-      const kinds = ['nod', 'shake', 'tilt', 'look'];
+      const kinds = ['nod', 'shake', 'tilt', 'look', 'quack'];
       if (kind === 'random') kind = kinds[tick % kinds.length];
       const dur = kind === 'tilt' ? 1.2 : kind === 'look' ? 1.6 : 1.3;
       activeEmote = { kind, t0: tick, dur, yaw: 0.7 * Math.sin(tick), pitch: 0.4 * Math.cos(tick) };
     },
+    setMouth(v) { mouthHold = Math.max(0, Math.min(1, v)); },
     setBackground(hex) {
       const c = new THREE.Color(hex);
       scene.background = c;
