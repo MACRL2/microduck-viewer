@@ -1,0 +1,36 @@
+microduck-viewer
+================
+
+This project embeds and adapts third-party material. Attribution and license
+terms follow.
+
+Robot model, meshes, and MJCF
+-----------------------------
+  Source : https://github.com/pollen-robotics/microduck
+  License: Apache License 2.0
+  Files  : assets/microduck.glb, assets/robot_allcollisions.xml,
+           assets/meshes/*.stl
+
+Trained RL locomotion policy
+----------------------------
+  Source : https://github.com/pollen-robotics/microduck_rl
+  License: Apache License 2.0
+  Note   : The original checkpoint (BEST_alpha_walking.onnx, a plain MLP with an
+           input normalizer) was re-exported without modification of its weights
+           to a raw float32 blob (assets/policy.bin + assets/policy.meta.json)
+           so it can run in plain JavaScript without onnxruntime. The observation
+           layout, action scaling, and control interface are unchanged.
+
+Reference implementation
+------------------------
+  The browser sim loop (observation construction, floor/keyframe injection,
+  GLB→render mesh mapping) was adapted from the reference web app
+  https://huggingface.co/spaces/pollen-robotics/microduck-simulator
+  (physics/policy interface documented therein). Adapted, not copied verbatim.
+
+Runtime libraries
+-----------------
+  MuJoCo (@mujoco/mujoco, WebAssembly build) — Apache License 2.0
+  three.js — MIT License
+
+The Apache License 2.0 text is included in LICENSE.

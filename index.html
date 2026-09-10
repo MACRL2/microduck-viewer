@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>microduck-viewer</title>
+<style>
+  body { margin: 0; min-height: 100vh; background: #0e1116; color: #e6edf3;
+    font: 16px/1.5 system-ui, sans-serif; display: grid; place-items: center; }
+  main { max-width: 40rem; padding: 2rem; }
+  a { color: #f2c14e; }
+  code { background: #1f2937; padding: .1em .35em; border-radius: 4px; }
+  .routes { display: flex; gap: .75rem; margin: 1.25rem 0; flex-wrap: wrap; }
+  .routes a { background: #1f2937; color: #e6edf3; text-decoration: none;
+    padding: .6rem 1rem; border-radius: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🐤 microduck-viewer</h1>
+  <p>Interactive, in-browser simulations of Pollen Robotics' <b>microduck</b> — a
+  small articulated balancing robot. MuJoCo (WebAssembly) steps the physics, a
+  trained RL policy runs in plain JavaScript at 50&nbsp;Hz, three.js renders. No
+  server, no build.</p>
+  <p>Embeddable simulation routes:</p>
+  <div class="routes">
+    <a href="./balance/">balance ↯</a>
+  </div>
+  <p>Each route mounts full-viewport and is designed to be embedded via
+  <code>&lt;iframe&gt;</code> in the MACRL2 course. It accepts
+  <code>?theme=light</code> and <code>postMessage</code>
+  (<code>microduck:push</code> / <code>microduck:reset</code> / <code>microduck:theme</code>).</p>
+  <p>Robot assets and policies are from
+  <a href="https://github.com/pollen-robotics/microduck">pollen-robotics/microduck</a>
+  and <a href="https://github.com/pollen-robotics/microduck_rl">microduck_rl</a>
+  (Apache-2.0). See <a href="./NOTICE">NOTICE</a>.</p>
+</main>
+</body>
+</html>

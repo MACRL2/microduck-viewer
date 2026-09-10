@@ -1,0 +1,36 @@
+# Deploy the static viewer to GitHub Pages. No build — the site is plain
+# ESM + vendored wasm. Enable Pages with "Source: GitHub Actions".
+name: Deploy viewer to Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage site (only what the browser needs)
+        run: |
+          mkdir _site
+          cp -r index.html balance src vendor assets NOTICE LICENSE _site/
+          touch _site/.nojekyll   # keep underscore/vendor paths untouched
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
