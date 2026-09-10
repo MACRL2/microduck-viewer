@@ -90,7 +90,16 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     if (!geo.getAttribute('normal')) geo.computeVertexNormals();
     const m = new THREE.Mesh(geo, matFor(i));
     m.matrixAutoUpdate = false;
-    scene.add(m); meshGeoms.push({ i, m });
+    // MuJoCo recenters/reorients mesh assets on compile (mesh_pos/mesh_quat);
+    // the GLB carries original vertices, so undo it: world = geom · inv(meshLocal).
+    // Without this, offset assemblies (feet/soles/ankles) render staggered and
+    // rotated ~90° (pads sideways) even though the physics is correct.
+    const meshLocalInv = new THREE.Matrix4().compose(
+      new THREE.Vector3(model.mesh_pos[dataid * 3], model.mesh_pos[dataid * 3 + 1], model.mesh_pos[dataid * 3 + 2]),
+      new THREE.Quaternion(model.mesh_quat[dataid * 4 + 1], model.mesh_quat[dataid * 4 + 2],
+        model.mesh_quat[dataid * 4 + 3], model.mesh_quat[dataid * 4]),   // wxyz -> xyzw
+      new THREE.Vector3(1, 1, 1)).invert();
+    scene.add(m); meshGeoms.push({ i, m, meshLocalInv });
   }
 
   const cam = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
@@ -141,13 +150,15 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     for (let j = 0; j < NUM_JOINTS; j++) ctrl[j] = DEFAULT_POSE[j] + act[j] * ACTION_SCALE;
     for (let s = 0; s < DECIMATION; s++) mujoco.mj_step(model, data);
   }
+  const _geom = new THREE.Matrix4();
   function syncMeshes() {
-    const xp = data.geom_xpos, xm = data.geom_xmat;
-    for (const { i, m } of meshGeoms) {
+    const xp = data.geom_xpos, xm = data.geom_xmat;   // geom_xmat is row-major 3x3
+    for (const { i, m, meshLocalInv } of meshGeoms) {
       const p = i * 3, r = i * 9;
-      m.matrix.set(xm[r], xm[r + 1], xm[r + 2], xp[p],
+      _geom.set(xm[r], xm[r + 1], xm[r + 2], xp[p],
         xm[r + 3], xm[r + 4], xm[r + 5], xp[p + 1],
         xm[r + 6], xm[r + 7], xm[r + 8], xp[p + 2], 0, 0, 0, 1);
+      m.matrix.multiplyMatrices(_geom, meshLocalInv);
     }
   }
 
