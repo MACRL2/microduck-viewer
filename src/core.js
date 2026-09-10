@@ -104,10 +104,26 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
 
   const cam = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
   cam.up.set(0, 0, 1);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 1.1));
-  const dl = new THREE.DirectionalLight(0xffffff, 1.4); dl.position.set(1, -1, 2); scene.add(dl);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 1.0));
+  const dl = new THREE.DirectionalLight(0xffffff, 1.3);
+  dl.position.set(0.6, -0.8, 1.8); dl.castShadow = true;
+  dl.shadow.mapSize.set(1024, 1024);
+  Object.assign(dl.shadow.camera, { left: -0.5, right: 0.5, top: 0.5, bottom: -0.5, near: 0.1, far: 4 });
+  dl.shadow.bias = -0.001; scene.add(dl); scene.add(dl.target);
+  for (const { m } of meshGeoms) m.castShadow = true;
+
+  // Ground plane at z=0 (MuJoCo floor). Same color as the backdrop so it reads
+  // as a floor only via lighting + the duck's contact shadow; fog fades its far
+  // edge into the background so there's no hard horizon line.
+  const groundMat = new THREE.MeshStandardMaterial({ color: background, roughness: 1, metalness: 0 });
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(2.5, 64), groundMat);
+  ground.receiveShadow = true; scene.add(ground);   // CircleGeometry lies in XY (normal +Z) — correct for Z-up
+  scene.fog = new THREE.Fog(background, 0.8, 2.8);
+
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   function resize() {
     const w = canvas.clientWidth || 640, h = canvas.clientHeight || 480;
@@ -182,7 +198,10 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     stop() { running = false; cancelAnimationFrame(raf); },
     push(vx = 0.8, vy = 0.5) { const v = data.qvel; v[0] += vx; v[1] += vy; },
     reset() { resetPose(); },
-    setBackground(hex) { scene.background = new THREE.Color(hex); },
+    setBackground(hex) {
+      const c = new THREE.Color(hex);
+      scene.background = c; scene.fog.color = c; groundMat.color = c;
+    },
     trunkZ: () => data.xpos[trunkId * 3 + 2],
     resize,
     dispose() {

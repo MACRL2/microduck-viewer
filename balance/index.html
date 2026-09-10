@@ -38,7 +38,10 @@
   import { createViewer } from '../src/core.js';
   const params = new URLSearchParams(location.search);
   if (params.get('theme') === 'light') document.documentElement.classList.add('light');
-  const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+  // The host page can pass its exact background via ?bg=%23rrggbb so the canvas
+  // (and ground/fog) blends into the page; otherwise fall back to our own theme.
+  const bg = params.get('bg') || getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+  if (params.get('bg')) document.documentElement.style.setProperty('--bg', bg);
   const status = document.getElementById('status');
   const viewer = await createViewer({
     canvas: document.getElementById('c'),
@@ -55,7 +58,8 @@
     else if (d.type === 'microduck:reset') viewer.reset();
     else if (d.type === 'microduck:theme') {
       document.documentElement.classList.toggle('light', d.value === 'light');
-      const c = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+      const c = d.bg || getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+      document.documentElement.style.setProperty('--bg', c);
       viewer.setBackground(new THREE.Color(c).getHex());
     }
   });
