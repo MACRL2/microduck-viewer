@@ -174,7 +174,32 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     return obs;
   }
 
+  // Head "emoting": the policy tracks head-pose targets in the command slots
+  // cmd[3..6] = [neck_pitch, head_pitch, head_yaw, head_roll] while it balances,
+  // so we just write targets there. A gentle idle look-around runs always; an
+  // emote() overlays a short scripted gesture with an ease-in/out envelope.
+  const DT = 0.02;                 // control period (50 Hz)
+  let tick = 0, activeEmote = null;
+  function driveHead() {
+    const t = tick * DT;
+    let neck = 0;
+    let pitch = 0.10 * Math.sin(t * 0.37 + 0.5);          // idle: gentle scan
+    let yaw = 0.20 * Math.sin(t * 0.53) + 0.09 * Math.sin(t * 0.24 + 1.3);
+    let roll = 0.05 * Math.sin(t * 0.29 + 2.1);
+    if (activeEmote) {
+      const s = (tick - activeEmote.t0) * DT, k = s / activeEmote.dur;
+      const env = Math.sin(Math.PI * Math.min(1, k));      // 0 → 1 → 0
+      const e = activeEmote;
+      if (e.kind === 'nod') pitch += env * 0.7 * Math.sin(2 * Math.PI * 2 * k);
+      else if (e.kind === 'shake') yaw += env * 0.85 * Math.sin(2 * Math.PI * 2.5 * k);
+      else if (e.kind === 'tilt') roll += env * 0.75;
+      else if (e.kind === 'look') { yaw += env * e.yaw; pitch += env * e.pitch; }
+      if (k >= 1) activeEmote = null;
+    }
+    cmd[3] = neck; cmd[4] = pitch; cmd[5] = yaw; cmd[6] = roll;
+  }
   function controlStep() {
+    tick++; driveHead();
     const act = forward(buildObs());
     lastAction.set(act);
     const ctrl = data.ctrl;
@@ -214,6 +239,12 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     stop() { running = false; cancelAnimationFrame(raf); },
     push(vx = 0.8, vy = 0.5) { const v = data.qvel; v[0] += vx; v[1] += vy; },
     reset() { resetPose(); },
+    emote(kind = 'random') {
+      const kinds = ['nod', 'shake', 'tilt', 'look'];
+      if (kind === 'random') kind = kinds[tick % kinds.length];
+      const dur = kind === 'tilt' ? 1.2 : kind === 'look' ? 1.6 : 1.3;
+      activeEmote = { kind, t0: tick, dur, yaw: 0.7 * Math.sin(tick), pitch: 0.4 * Math.cos(tick) };
+    },
     setBackground(hex) {
       const c = new THREE.Color(hex);
       scene.background = c;
