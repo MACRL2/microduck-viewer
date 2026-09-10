@@ -23,8 +23,11 @@ async function loadGlbGeometries() {
   return map;
 }
 
-// opts: { canvas, onStatus?: fn, background?: number }
-export async function createViewer({ canvas, onStatus = () => {}, background = 0x0e1116 }) {
+// opts: { canvas, onStatus?: fn, background?: number, ground?: 'circle'|'plane'|'none' }
+//   ground 'circle' (default) — a soft blob shadow under the feet that fades out
+//   ground 'plane'            — a full floor + fog fading into the backdrop
+//   ground 'none'             — no floor at all
+export async function createViewer({ canvas, onStatus = () => {}, background = 0x0e1116, ground = 'circle' }) {
   onStatus('loading physics…');
   const mujoco = await loadMujoco({
     locateFile: (p) => p.endsWith('.wasm')
@@ -106,24 +109,39 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
   cam.up.set(0, 0, 1);
   scene.add(new THREE.HemisphereLight(0xffffff, 0x334155, 1.0));
   const dl = new THREE.DirectionalLight(0xffffff, 1.3);
-  dl.position.set(0.6, -0.8, 1.8); dl.castShadow = true;
-  dl.shadow.mapSize.set(1024, 1024);
-  Object.assign(dl.shadow.camera, { left: -0.5, right: 0.5, top: 0.5, bottom: -0.5, near: 0.1, far: 4 });
-  dl.shadow.bias = -0.001; scene.add(dl); scene.add(dl.target);
-  for (const { m } of meshGeoms) m.castShadow = true;
+  dl.position.set(0.6, -0.8, 1.8); scene.add(dl); scene.add(dl.target);
 
-  // Ground plane at z=0 (MuJoCo floor). Same color as the backdrop so it reads
-  // as a floor only via lighting + the duck's contact shadow; fog fades its far
-  // edge into the background so there's no hard horizon line.
-  const groundMat = new THREE.MeshStandardMaterial({ color: background, roughness: 1, metalness: 0 });
-  const ground = new THREE.Mesh(new THREE.CircleGeometry(2.5, 64), groundMat);
-  ground.receiveShadow = true; scene.add(ground);   // CircleGeometry lies in XY (normal +Z) — correct for Z-up
-  scene.fog = new THREE.Fog(background, 0.8, 2.8);
-
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio || 1, 2));
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  // Ground treatments (see opts.ground). `groundMat` / `blob` may stay null.
+  let groundMat = null, blob = null;
+  if (ground === 'plane') {
+    // Full floor: same color as the backdrop, grounded via a real PCF cast
+    // shadow, with fog fading the far edge into the background (no hard horizon).
+    dl.castShadow = true; dl.shadow.mapSize.set(1024, 1024); dl.shadow.bias = -0.001;
+    Object.assign(dl.shadow.camera, { left: -0.5, right: 0.5, top: 0.5, bottom: -0.5, near: 0.1, far: 4 });
+    for (const { m } of meshGeoms) m.castShadow = true;
+    groundMat = new THREE.MeshStandardMaterial({ color: background, roughness: 1, metalness: 0 });
+    const g = new THREE.Mesh(new THREE.CircleGeometry(2.5, 64), groundMat);
+    g.receiveShadow = true; scene.add(g);
+    scene.fog = new THREE.Fog(background, 0.8, 2.8);
+    renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  } else if (ground === 'circle') {
+    // A soft "hovering" blob shadow under the feet that fades to nothing at its
+    // rim — local to the robot, no floor, no horizon. Follows the trunk in x,y.
+    const s = 128, cv = document.createElement('canvas'); cv.width = cv.height = s;
+    const g2 = cv.getContext('2d');
+    const rg = g2.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+    rg.addColorStop(0, 'rgba(0,0,0,0.40)');
+    rg.addColorStop(0.45, 'rgba(0,0,0,0.16)');
+    rg.addColorStop(1, 'rgba(0,0,0,0)');
+    g2.fillStyle = rg; g2.fillRect(0, 0, s, s);
+    const tex = new THREE.CanvasTexture(cv);
+    blob = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.34),   // XY plane, normal +Z (Z-up floor)
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+    blob.position.z = 0.004; scene.add(blob);
+  }
 
   function resize() {
     const w = canvas.clientWidth || 640, h = canvas.clientHeight || 480;
@@ -186,6 +204,7 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     controlStep();
     camAngle += 0.0015;
     aimCamera(); syncMeshes();
+    if (blob) { blob.position.x = data.xpos[trunkId * 3]; blob.position.y = data.xpos[trunkId * 3 + 1]; }
     renderer.render(scene, cam);
     raf = requestAnimationFrame(frame);
   }
@@ -200,7 +219,9 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     reset() { resetPose(); },
     setBackground(hex) {
       const c = new THREE.Color(hex);
-      scene.background = c; scene.fog.color = c; groundMat.color = c;
+      scene.background = c;
+      if (scene.fog) scene.fog.color = c;
+      if (groundMat) groundMat.color = c;
     },
     trunkZ: () => data.xpos[trunkId * 3 + 2],
     resize,

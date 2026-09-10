@@ -46,6 +46,7 @@
   const viewer = await createViewer({
     canvas: document.getElementById('c'),
     background: new THREE.Color(bg).getHex(),
+    ground: params.get('ground') || 'circle',
     onStatus: (m) => { status.textContent = m; if (m === 'ready') status.style.display = 'none'; },
   });
   document.getElementById('push').onclick = () => viewer.push(
