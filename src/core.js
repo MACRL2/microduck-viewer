@@ -114,33 +114,30 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio || 1, 2));
 
-  // Ground treatments (see opts.ground). `groundMat` / `blob` may stay null.
-  let groundMat = null, blob = null;
-  if (ground === 'plane') {
-    // Full floor: same color as the backdrop, grounded via a real PCF cast
-    // shadow, with fog fading the far edge into the background (no hard horizon).
-    dl.castShadow = true; dl.shadow.mapSize.set(1024, 1024); dl.shadow.bias = -0.001;
-    Object.assign(dl.shadow.camera, { left: -0.5, right: 0.5, top: 0.5, bottom: -0.5, near: 0.1, far: 4 });
+  // Ground treatments (see opts.ground). Both 'plane' and 'circle' cast a REAL
+  // PCF shadow from the duck's geometry; they differ only in the receiver.
+  let groundMat = null, shadowRx = null;
+  if (ground !== 'none') {
+    dl.castShadow = true; dl.shadow.mapSize.set(2048, 2048); dl.shadow.bias = -0.0015;
+    dl.shadow.radius = 4;   // soften the PCF edge so the contact shadow reads as "fading"
+    Object.assign(dl.shadow.camera, { left: -0.4, right: 0.4, top: 0.4, bottom: -0.4, near: 0.05, far: 4 });
     for (const { m } of meshGeoms) m.castShadow = true;
+    renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  }
+  if (ground === 'plane') {
+    // Full floor: same color as the backdrop, with fog fading the far edge into
+    // the background so there's no hard horizon line.
     groundMat = new THREE.MeshStandardMaterial({ color: background, roughness: 1, metalness: 0 });
     const g = new THREE.Mesh(new THREE.CircleGeometry(2.5, 64), groundMat);
     g.receiveShadow = true; scene.add(g);
     scene.fog = new THREE.Fog(background, 0.8, 2.8);
-    renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   } else if (ground === 'circle') {
-    // A soft "hovering" blob shadow under the feet that fades to nothing at its
-    // rim — local to the robot, no floor, no horizon. Follows the trunk in x,y.
-    const s = 128, cv = document.createElement('canvas'); cv.width = cv.height = s;
-    const g2 = cv.getContext('2d');
-    const rg = g2.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
-    rg.addColorStop(0, 'rgba(0,0,0,0.40)');
-    rg.addColorStop(0.45, 'rgba(0,0,0,0.16)');
-    rg.addColorStop(1, 'rgba(0,0,0,0)');
-    g2.fillStyle = rg; g2.fillRect(0, 0, s, s);
-    const tex = new THREE.CanvasTexture(cv);
-    blob = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.34),   // XY plane, normal +Z (Z-up floor)
-      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
-    blob.position.z = 0.004; scene.add(blob);
+    // Local "hovering" contact shadow: a ShadowMaterial receiver disc is fully
+    // transparent EXCEPT where the duck's real shadow falls, so the true shadow
+    // shape floats under the feet with no visible floor. Follows the trunk.
+    shadowRx = new THREE.Mesh(new THREE.CircleGeometry(0.7, 48),
+      new THREE.ShadowMaterial({ opacity: 0.32, transparent: true }));
+    shadowRx.receiveShadow = true; shadowRx.position.z = 0.002; scene.add(shadowRx);
   }
 
   function resize() {
@@ -204,7 +201,7 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     controlStep();
     camAngle += 0.0015;
     aimCamera(); syncMeshes();
-    if (blob) { blob.position.x = data.xpos[trunkId * 3]; blob.position.y = data.xpos[trunkId * 3 + 1]; }
+    if (shadowRx) { shadowRx.position.x = data.xpos[trunkId * 3]; shadowRx.position.y = data.xpos[trunkId * 3 + 1]; }
     renderer.render(scene, cam);
     raf = requestAnimationFrame(frame);
   }
