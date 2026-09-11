@@ -49,10 +49,22 @@
   const bg = params.get('bg') || getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
   if (params.get('bg')) document.documentElement.style.setProperty('--bg', bg);
   const status = document.getElementById('status');
+  // Optional scene obstacles: ?scene=lip|box|step (+ &h=<metres> to set height).
+  function presetScene(name) {
+    const h = parseFloat(params.get('h'));
+    const hz = ((isFinite(h) && h > 0) ? h : { lip: 0.04, box: 0.06, step: 0.06 }[name] || 0.04) / 2;
+    if (name === 'lip') return [{ pos: [0.24, 0, hz], size: [0.03, 0.18, hz] }];
+    if (name === 'box') return [{ pos: [0.20, 0.10, hz], size: [0.03, 0.03, hz] }];
+    if (name === 'step') return [{ pos: [0.32, 0, hz], size: [0.16, 0.24, hz] }];
+    return [];
+  }
+  const scene = params.get('scene') ? presetScene(params.get('scene')) : [];
   const viewer = await createViewer({
     canvas: document.getElementById('c'),
     background: new THREE.Color(bg).getHex(),
-    ground: params.get('ground') || 'circle',
+    // a scene reads best over a real floor, so default ground to 'plane' when present
+    ground: params.get('ground') || (scene.length ? 'plane' : 'circle'),
+    scene,
     onStatus: (m) => { status.textContent = m; if (m === 'ready') status.style.display = 'none'; },
   });
   document.getElementById('push').onclick = () => viewer.push(

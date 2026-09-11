@@ -30,11 +30,15 @@ async function loadGlbGeometries() {
   return map;
 }
 
-// opts: { canvas, onStatus?: fn, background?: number, ground?: 'circle'|'plane'|'none' }
+// opts: { canvas, onStatus?, background?, ground?: 'circle'|'plane'|'none', scene? }
 //   ground 'circle' (default) — a soft blob shadow under the feet that fades out
 //   ground 'plane'            — a full floor + fog fading into the backdrop
 //   ground 'none'             — no floor at all
-export async function createViewer({ canvas, onStatus = () => {}, background = 0x0e1116, ground = 'circle' }) {
+//   scene  — abstract obstacle geometry on the ground the robot collides with:
+//            an array of boxes { pos:[x,y,z], size:[hx,hy,hz], rgba?:'r g b a', name? }
+//            (MuJoCo half-sizes; a "lip" of height h → z=h/2, hz=h/2). Injected
+//            into the world AND rendered.
+export async function createViewer({ canvas, onStatus = () => {}, background = 0x0e1116, ground = 'circle', scene: obstacles = [] }) {
   onStatus('loading physics…');
   const mujoco = await loadMujoco({
     locateFile: (p) => p.endsWith('.wasm')
@@ -42,10 +46,14 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
   });
 
   // Robot MJCF has no floor/keyframe (the source app injects the arena at
-  // runtime). Add a ground plane; set the spawn pose ourselves.
+  // runtime). Add a ground plane + any scene obstacles; set the spawn pose too.
   let xml = await (await fetch(asset('robot_allcollisions.xml'))).text();
+  const sceneXml = obstacles.map((b, i) =>
+    `<geom name="scene_${i}" type="box" pos="${b.pos.join(' ')}" size="${b.size.join(' ')}"` +
+    ` rgba="${b.rgba || '0.46 0.52 0.64 1'}" condim="3" friction="1 0.005 0.0001"/>`).join('');
   xml = xml.replace('</worldbody>',
-    '<geom name="floor" type="plane" size="0 0 0.05" pos="0 0 0" condim="3" friction="1 0.005 0.0001"/></worldbody>');
+    '<geom name="floor" type="plane" size="0 0 0.05" pos="0 0 0" condim="3" friction="1 0.005 0.0001"/>'
+    + sceneXml + '</worldbody>');
   const meshNames = [...new Set([...xml.matchAll(/<mesh file="([^"]+)"/g)].map((m) => m[1]))];
   const vfs = new mujoco.MjVFS();
   for (const f of meshNames) {
@@ -113,6 +121,23 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
       new THREE.Vector3(1, 1, 1)).invert();
     scene.add(m); meshGeoms.push({ i, m, meshLocalInv });
     if (mname === 'jaw' || mname === 'jaw_soft') { jawMeshes.push(m); if (mname === 'jaw') jawMain = m; }
+  }
+
+  // Scene obstacles (injected box geoms named scene_*): render one THREE box per
+  // geom, placed each frame from its MuJoCo world transform. They cast + receive
+  // shadows so they read as solid geometry sitting on the ground.
+  const BOX = mujoco.mjtGeom.mjGEOM_BOX.value;
+  const sceneBoxes = [];
+  for (let i = 0; i < model.ngeom; i++) {
+    if (model.geom_type[i] !== BOX) continue;
+    const nm = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM.value, i);
+    if (!nm || !nm.startsWith('scene_')) continue;
+    const sx = model.geom_size[i * 3], sy = model.geom_size[i * 3 + 1], sz = model.geom_size[i * 3 + 2];
+    const col = new THREE.Color(model.geom_rgba[i * 4], model.geom_rgba[i * 4 + 1], model.geom_rgba[i * 4 + 2]);
+    const box = new THREE.Mesh(new THREE.BoxGeometry(2 * sx, 2 * sy, 2 * sz),
+      new THREE.MeshStandardMaterial({ color: col, roughness: 0.8, metalness: 0.05 }));
+    box.matrixAutoUpdate = false; box.castShadow = true; box.receiveShadow = true;
+    scene.add(box); sceneBoxes.push({ i, m: box });
   }
 
   const cam = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
@@ -246,6 +271,13 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
         .multiply(_rRot)
         .multiply(_tmp.makeTranslation(-_hinge.x, -_hinge.y, -_hinge.z));
       for (const jm of jawMeshes) jm.matrix.premultiply(_rOpen);
+    }
+    // Scene boxes: box geom frame == geom center, so world = geom transform.
+    for (const { i, m } of sceneBoxes) {
+      const p = i * 3, r = i * 9;
+      m.matrix.set(xm[r], xm[r + 1], xm[r + 2], xp[p],
+        xm[r + 3], xm[r + 4], xm[r + 5], xp[p + 1],
+        xm[r + 6], xm[r + 7], xm[r + 8], xp[p + 2], 0, 0, 0, 1);
     }
   }
 
