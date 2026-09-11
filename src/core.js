@@ -38,7 +38,7 @@ async function loadGlbGeometries() {
 //            an array of boxes { pos:[x,y,z], size:[hx,hy,hz], rgba?:'r g b a', name? }
 //            (MuJoCo half-sizes; a "lip" of height h → z=h/2, hz=h/2). Injected
 //            into the world AND rendered.
-export async function createViewer({ canvas, onStatus = () => {}, background = 0x0e1116, ground = 'circle', scene: obstacles = [] }) {
+export async function createViewer({ canvas, onStatus = () => {}, background = 0x0e1116, ground = 'circle', scene: obstacles = [], autoWalk = false }) {
   onStatus('loading physics…');
   const mujoco = await loadMujoco({
     locateFile: (p) => p.endsWith('.wasm')
@@ -48,6 +48,10 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
   // Robot MJCF has no floor/keyframe (the source app injects the arena at
   // runtime). Add a ground plane + any scene obstacles; set the spawn pose too.
   let xml = await (await fetch(asset('robot_allcollisions.xml'))).text();
+  // The MJCF sets no timestep, so MuJoCo would default to 0.002 s; the policies
+  // were trained at 0.005 s with decimation 4 (50 Hz control). Without this the
+  // duck still balances but can't walk — the gait timing is 2.5× off.
+  xml = xml.replace(/(<compiler\b[^>]*\/>)/, '$1<option timestep="0.005"/>');
   const sceneXml = obstacles.map((b, i) =>
     `<geom name="scene_${i}" type="box" pos="${b.pos.join(' ')}" size="${b.size.join(' ')}"` +
     ` rgba="${b.rgba || '0.46 0.52 0.64 1'}" condim="3" friction="1 0.005 0.0001"/>`).join('');
@@ -218,10 +222,9 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
   let mouthOpen = 0, mouthHold = 0;    // 0 = closed, 1 = fully open (render-side jaw)
   function driveHead() {
     const t = tick * DT;
-    let neck = 0;
-    let pitch = 0.10 * Math.sin(t * 0.37 + 0.5);          // idle: gentle scan
-    let yaw = 0.20 * Math.sin(t * 0.53) + 0.09 * Math.sin(t * 0.24 + 1.3);
-    let roll = 0.05 * Math.sin(t * 0.29 + 2.1);
+    // No idle head motion: a moving head at gait-establishment makes walking
+    // fragile. The head stays neutral unless an emote overlays a gesture.
+    let neck = 0, pitch = 0, yaw = 0, roll = 0;
     let mouth = mouthHold;
     if (activeEmote) {
       const s = (tick - activeEmote.t0) * DT, k = s / activeEmote.dur;
@@ -240,8 +243,17 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     cmd[3] = neck; cmd[4] = pitch; cmd[5] = yaw; cmd[6] = roll;
     mouthOpen = Math.max(0, Math.min(1, mouth));
   }
+  // Locomotion: the same policy walks when the velocity command slots are driven.
+  // cmd[0]=forward (m/s), cmd[1]=lateral (kept 0), cmd[2]=turn (rad/s). auto-walk
+  // gently circles so it stays framed; setVelocity() hands control to the caller.
+  let walking = autoWalk, vx = 0, wz = 0, vxT = 0, wzT = 0;
+  function driveVel() {
+    if (walking) { vxT = 0.30; wzT = 0.25; }               // forward above the ~0.25 gait threshold + a gentle turn (circles)
+    vx = vxT; wz = wzT;                                     // step command (a ramp never kicks the gait into motion)
+    cmd[0] = vx; cmd[1] = 0; cmd[2] = wz;
+  }
   function controlStep() {
-    tick++; driveHead();
+    tick++; driveHead(); driveVel();
     const act = forward(buildObs());
     lastAction.set(act);
     const ctrl = data.ctrl;
@@ -309,13 +321,20 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
       activeEmote = { kind, t0: tick, dur, yaw: 0.7 * Math.sin(tick), pitch: 0.4 * Math.cos(tick) };
     },
     setMouth(v) { mouthHold = Math.max(0, Math.min(1, v)); },
+    setVelocity(v = 0, w = 0) { walking = false; vxT = v; wzT = w; },   // m/s, rad/s
+    setAutoWalk(on = true) { walking = !!on; if (!on) { vxT = 0; wzT = 0; } },
+    pose: () => {
+      const q = data.qpos, a = freeAdr;
+      const yaw = Math.atan2(2 * (q[a + 3] * q[a + 6] + q[a + 4] * q[a + 5]), 1 - 2 * (q[a + 5] ** 2 + q[a + 6] ** 2));
+      return { x: data.xpos[trunkId * 3], y: data.xpos[trunkId * 3 + 1], z: data.xpos[trunkId * 3 + 2], yaw, t: data.time };
+    },
+    trunkZ: () => data.xpos[trunkId * 3 + 2],
     setBackground(hex) {
       const c = new THREE.Color(hex);
       scene.background = c;
       if (scene.fog) scene.fog.color = c;
       if (groundMat) groundMat.color = c;
     },
-    trunkZ: () => data.xpos[trunkId * 3 + 2],
     resize,
     dispose() {
       running = false; cancelAnimationFrame(raf);

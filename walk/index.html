@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>microduck · walk</title>
+<style>
+  :root { --bg: #0e1116; --fg: #e6edf3; --btn: #1f2937; --btn-fg: #e6edf3; }
+  html.light { --bg: #f7f7f5; --fg: #1a1a1a; --btn: #e5e5e2; --btn-fg: #1a1a1a; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #wrap { position: fixed; inset: 0; }
+  canvas { width: 100%; height: 100%; display: block; }
+  #hud { position: absolute; left: 12px; bottom: 12px; right: 12px; display: flex;
+    gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+  .pad { display: grid; grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(2, 34px);
+    gap: 4px; }
+  .pad .up { grid-column: 2; grid-row: 1; } .pad .down { grid-column: 2; grid-row: 2; }
+  .pad .left { grid-column: 1; grid-row: 2; } .pad .right { grid-column: 3; grid-row: 2; }
+  button { background: var(--btn); color: var(--btn-fg); border: 0; border-radius: 8px;
+    padding: 8px 12px; font: inherit; cursor: pointer; touch-action: none; user-select: none; }
+  button:active { transform: translateY(1px); }
+  #status { position: absolute; left: 12px; top: 12px; opacity: .6; }
+  #hint { position: absolute; right: 12px; top: 12px; opacity: .5; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <div id="status">booting…</div>
+  <div id="hint">hold the arrows · or WASD / ← ↑ ↓ →</div>
+  <div id="hud">
+    <div class="pad">
+      <button class="up"    data-vx="0.30"  data-wz="0">▲</button>
+      <button class="left"  data-vx="0"     data-wz="0.8">◀</button>
+      <button class="down"  data-vx="-0.25" data-wz="0">▼</button>
+      <button class="right" data-vx="0"     data-wz="-0.8">▶</button>
+    </div>
+    <button id="wander">Wander</button>
+    <button id="quack">Quack 🦆</button>
+    <button id="reset">Reset</button>
+  </div>
+</div>
+<script type="importmap">
+{ "imports": {
+  "three": "../vendor/three/build/three.module.js",
+  "three/addons/": "../vendor/three/addons/"
+} }
+</script>
+<script type="module">
+  import * as THREE from 'three';
+  import { createViewer } from '../src/core.js';
+  const params = new URLSearchParams(location.search);
+  if (params.get('theme') === 'light') document.documentElement.classList.add('light');
+  const bg = params.get('bg') || getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+  if (params.get('bg')) document.documentElement.style.setProperty('--bg', bg);
+  const status = document.getElementById('status');
+  const viewer = await createViewer({
+    canvas: document.getElementById('c'),
+    background: new THREE.Color(bg).getHex(),
+    ground: params.get('ground') || 'plane',       // a floor to walk over
+    autoWalk: true,                                  // gentle wander until the user drives
+    onStatus: (m) => { status.textContent = m; if (m === 'ready') status.style.display = 'none'; },
+  });
+
+  // Press-and-hold D-pad (pointer) — one direction at a time.
+  for (const btn of document.querySelectorAll('.pad button')) {
+    const vx = +btn.dataset.vx, wz = +btn.dataset.wz;
+    const go = (e) => { e.preventDefault(); viewer.setVelocity(vx, wz); };
+    const stop = () => viewer.setVelocity(0, 0);
+    btn.addEventListener('pointerdown', go);
+    btn.addEventListener('pointerup', stop);
+    btn.addEventListener('pointerleave', stop);
+    btn.addEventListener('pointercancel', stop);
+  }
+  document.getElementById('wander').onclick = () => viewer.setAutoWalk(true);
+  document.getElementById('quack').onclick = () => viewer.emote('quack');
+  document.getElementById('reset').onclick = () => viewer.reset();
+
+  // Keyboard: hold WASD / arrows (combines forward + turn).
+  const keys = new Set();
+  const MAP = { w: 'up', ArrowUp: 'up', s: 'down', ArrowDown: 'down',
+    a: 'left', ArrowLeft: 'left', d: 'right', ArrowRight: 'right' };
+  function fromKeys() {
+    let vx = 0, wz = 0;
+    if (keys.has('up')) vx += 0.30; if (keys.has('down')) vx -= 0.25;
+    if (keys.has('left')) wz += 0.6; if (keys.has('right')) wz -= 0.6;
+    viewer.setVelocity(vx, wz);
+  }
+  addEventListener('keydown', (e) => { const k = MAP[e.key]; if (k) { keys.add(k); fromKeys(); e.preventDefault(); } });
+  addEventListener('keyup', (e) => { const k = MAP[e.key]; if (k) { keys.delete(k); fromKeys(); } });
+
+  // Host control over postMessage.
+  addEventListener('message', (e) => {
+    const d = e.data || {};
+    if (d.type === 'microduck:walk') viewer.setVelocity(d.vx || 0, d.wz || 0);
+    else if (d.type === 'microduck:wander') viewer.setAutoWalk(true);
+    else if (d.type === 'microduck:emote') viewer.emote(d.value || 'random');
+    else if (d.type === 'microduck:reset') viewer.reset();
+    else if (d.type === 'microduck:theme') {
+      document.documentElement.classList.toggle('light', d.value === 'light');
+      const c = d.bg || getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+      document.documentElement.style.setProperty('--bg', c);
+      viewer.setBackground(new THREE.Color(c).getHex());
+    }
+  });
+  viewer.start();
+  window.__viewer = viewer;
+</script>
+</body>
+</html>

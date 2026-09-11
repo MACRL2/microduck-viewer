@@ -26,7 +26,7 @@ jobs:
       - name: Stage site (only what the browser needs)
         run: |
           mkdir _site
-          cp -r index.html balance src vendor assets NOTICE LICENSE _site/
+          cp -r index.html balance walk src vendor assets NOTICE LICENSE _site/
           touch _site/.nojekyll   # keep underscore/vendor paths untouched
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
