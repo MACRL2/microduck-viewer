@@ -185,14 +185,30 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     cam.aspect = w / h; cam.updateProjectionMatrix();
   }
 
-  // Orbit the camera around the (moving) trunk so the duck stays framed.
-  let camAngle = -0.6;
+  // Camera orbits the (moving) trunk. No auto-rotation — the user drags to orbit
+  // (azimuth) and tilt (elevation); the camera keeps tracking the trunk.
+  let camAngle = -0.6, camElev = 0.12;
   function aimCamera() {
     const cx = data.xpos[trunkId * 3], cy = data.xpos[trunkId * 3 + 1], cz = data.xpos[trunkId * 3 + 2];
-    const R = 0.95;
-    cam.position.set(cx + R * Math.cos(camAngle), cy + R * Math.sin(camAngle), cz + 0.11);
+    const R = 0.96, r = R * Math.cos(camElev), h = R * Math.sin(camElev);
+    cam.position.set(cx + r * Math.cos(camAngle), cy + r * Math.sin(camAngle), cz + h);
     cam.lookAt(cx, cy, cz + 0.02);
   }
+  // Drag-to-orbit on the canvas.
+  let dragging = false, lastX = 0, lastY = 0;
+  const onDown = (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; canvas.style.cursor = 'grabbing'; canvas.setPointerCapture?.(e.pointerId); };
+  const onMove = (e) => {
+    if (!dragging) return;
+    camAngle -= (e.clientX - lastX) * 0.01;
+    camElev = Math.max(-0.25, Math.min(1.25, camElev + (e.clientY - lastY) * 0.008));
+    lastX = e.clientX; lastY = e.clientY;
+  };
+  const onUp = () => { dragging = false; canvas.style.cursor = 'grab'; };
+  canvas.style.cursor = 'grab';
+  canvas.addEventListener('pointerdown', onDown);
+  canvas.addEventListener('pointermove', onMove);
+  canvas.addEventListener('pointerup', onUp);
+  canvas.addEventListener('pointerleave', onUp);
 
   const obs = new Float32Array(OBS_SIZE);
   const cmd = new Float32Array(CMD_SIZE);      // zero command = balance/stand
@@ -222,9 +238,14 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
   let mouthOpen = 0, mouthHold = 0;    // 0 = closed, 1 = fully open (render-side jaw)
   function driveHead() {
     const t = tick * DT;
-    // No idle head motion: a moving head at gait-establishment makes walking
-    // fragile. The head stays neutral unless an emote overlays a gesture.
-    let neck = 0, pitch = 0, yaw = 0, roll = 0;
+    // Idle look-around, but only while ~stationary: a moving head at gait
+    // establishment makes walking fragile, so it fades out the instant a walk
+    // is commanded (keyed off the velocity target, not the ramped value).
+    const still = Math.max(0, 1 - 6 * (Math.abs(vxT) + Math.abs(wzT)));
+    let neck = 0;
+    let pitch = still * 0.10 * Math.sin(t * 0.37 + 0.5);
+    let yaw = still * (0.20 * Math.sin(t * 0.53) + 0.09 * Math.sin(t * 0.24 + 1.3));
+    let roll = still * 0.05 * Math.sin(t * 0.29 + 2.1);
     let mouth = mouthHold;
     if (activeEmote) {
       const s = (tick - activeEmote.t0) * DT, k = s / activeEmote.dur;
@@ -299,7 +320,6 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
   function frame() {
     if (!running) return;
     controlStep();
-    camAngle += 0.0015;
     aimCamera(); syncMeshes();
     if (shadowRx) { shadowRx.position.x = data.xpos[trunkId * 3]; shadowRx.position.y = data.xpos[trunkId * 3 + 1]; }
     renderer.render(scene, cam);
@@ -339,6 +359,10 @@ export async function createViewer({ canvas, onStatus = () => {}, background = 0
     dispose() {
       running = false; cancelAnimationFrame(raf);
       globalThis.removeEventListener('resize', onResize);
+      canvas.removeEventListener('pointerdown', onDown);
+      canvas.removeEventListener('pointermove', onMove);
+      canvas.removeEventListener('pointerup', onUp);
+      canvas.removeEventListener('pointerleave', onUp);
       renderer.dispose();
     },
   };

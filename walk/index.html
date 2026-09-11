@@ -55,11 +55,21 @@
   const bg = params.get('bg') || getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
   if (params.get('bg')) document.documentElement.style.setProperty('--bg', bg);
   const status = document.getElementById('status');
+  function presetScene(name) {
+    const h = parseFloat(params.get('h'));
+    const hz = ((isFinite(h) && h > 0) ? h : { lip: 0.04, box: 0.06, step: 0.06 }[name] || 0.04) / 2;
+    if (name === 'lip') return [{ pos: [0.6, 0, hz], size: [0.04, 0.4, hz] }];
+    if (name === 'box') return [{ pos: [0.5, 0.2, hz], size: [0.04, 0.04, hz] }];
+    if (name === 'step') return [{ pos: [0.7, 0, hz], size: [0.2, 0.5, hz] }];
+    return [];
+  }
+  const scene = params.get('scene') ? presetScene(params.get('scene')) : [];
   const viewer = await createViewer({
     canvas: document.getElementById('c'),
     background: new THREE.Color(bg).getHex(),
     ground: params.get('ground') || 'plane',       // a floor to walk over
     autoWalk: true,                                  // gentle wander until the user drives
+    scene,
     onStatus: (m) => { status.textContent = m; if (m === 'ready') status.style.display = 'none'; },
   });
 
